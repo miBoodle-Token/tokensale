@@ -32,12 +32,10 @@ contract MiBoodleVault is Ownable,SafeMath {
   /**
     * @param _unlockAdvertisersTokensTime Time for advertisers tokens unlock
     */
-    function MiBoodleVault(uint256 _unlockAdvertisersTokensTime, address _owner) public {
-      require(_owner != address(0));
-      owner = _owner;
+    function MiBoodleVault(uint256 _unlockAdvertisersTokensTime) public {
+      owner = msg.sender;
       // Mark it as MiBoodleVault
       isMiBoodleVault = true;
-
       // Set advertisers tokens unlock time
       unlockAdvertisersTokensTime = safeAdd(now, _unlockAdvertisersTokensTime);
     }
@@ -178,7 +176,7 @@ contract MiBoodleVault is Ownable,SafeMath {
    }
 }
 
-contract MiBoodleToken is ERC20, Ownable,SafeMath {
+contract MiBoodleToken is ERC20,Ownable,SafeMath {
 
     //flag to determine if address is for real contract or not
     bool public isMiBoodleToken = false;
@@ -190,9 +188,6 @@ contract MiBoodleToken is ERC20, Ownable,SafeMath {
     string public constant SYMBOL = "MIBO";
     uint256 public constant DECIMAL = 18; // decimal places
 
-    // MiBoodle's time-locked vault
-    MiBoodleVault public miBoodleVault;
-
     //mapping of token balances
     mapping (address => uint256) balances;
     //mapping of allowed address for each address with tranfer limit
@@ -200,7 +195,6 @@ contract MiBoodleToken is ERC20, Ownable,SafeMath {
     //mapping of allowed address for each address with burnable limit
     mapping (address => mapping (address => uint256)) allowedToBurn;
 
-    bool public finalizedUpgrade = false;
     address public upgradeMaster;
     UpgradeAgent public upgradeAgent;
     uint256 public totalUpgraded;
@@ -211,7 +205,6 @@ contract MiBoodleToken is ERC20, Ownable,SafeMath {
     event ApproveBurner(address owner, address canBurn, uint256 value);
     event BurnFrom(address _from,uint256 _value);
     event Upgrade(address indexed _from, address indexed _to, uint256 _value);
-    event UpgradeFinalized(address sender, address upgradeAgent);
     event UpgradeAgentSet(address agent);
 
     //modifier for validate external call
@@ -220,10 +213,9 @@ contract MiBoodleToken is ERC20, Ownable,SafeMath {
         _;
     }
 
-    function MiBoodleToken(address _crowdSale, uint256 _advertisersUnlockTime) public {
+    function MiBoodleToken(address _crowdSale) public {
         isMiBoodleToken = true;
         crowdSale = _crowdSale;
-        miBoodleVault = new MiBoodleVault(_advertisersUnlockTime, msg.sender);
     }
 
     // @param _who The address of the investor to check balance
@@ -239,6 +231,13 @@ contract MiBoodleToken is ERC20, Ownable,SafeMath {
         return allowed[_owner][_spender];
     }
 
+    // @param _owner The address of the account owning tokens
+    // @param _spender The address of the account able to transfer the tokens
+    // @return Amount of remaining tokens allowed to spent
+    function allowanceToBurn(address _owner, address _spender) public constant returns (uint) {
+        return allowedToBurn[_owner][_spender];
+    }
+
     //  Transfer `value` miBoodle tokens from sender's account
     // `msg.sender` to provided account address `to`.
     // @param _to The address of the recipient
@@ -247,9 +246,11 @@ contract MiBoodleToken is ERC20, Ownable,SafeMath {
     function transfer(address _to, uint _value) public returns (bool ok) {
         //validate receiver address and value.Now allow 0 value
         require(_to != 0 && _value > 0);
+        uint256 senderBalance = balances[msg.sender];
         //Check sender have enough balance
-        require(balances[msg.sender] >= _value);
-        balances[msg.sender] = safeSub(balances[msg.sender],_value);
+        require(senderBalance >= _value);
+        senderBalance = safeSub(senderBalance, _value);
+        balances[msg.sender] = senderBalance;
         balances[_to] = safeAdd(balances[_to],_value);
         Transfer(msg.sender, _to, _value);
         return true;
@@ -304,7 +305,10 @@ contract MiBoodleToken is ERC20, Ownable,SafeMath {
     function burn(uint _value) public returns (bool ok) {
         //validate receiver address and value.Now allow 0 value
         require(_value > 0);
-        balances[msg.sender] = safeSub(balances[msg.sender],_value);
+        uint256 senderBalance = balances[msg.sender];
+        require(senderBalance >= _value);
+        senderBalance = safeSub(senderBalance, _value);
+        balances[msg.sender] = senderBalance;
         totalSupply = safeSub(totalSupply,_value);
         Burn(msg.sender, _value);
         return true;
@@ -350,7 +354,7 @@ contract MiBoodleToken is ERC20, Ownable,SafeMath {
     /// @param value The number of tokens to upgrade
     function upgrade(uint256 value) external {
         /*if (getState() != State.Success) throw; // Abort if not in Success state.*/
-        require(upgradeAgentStatus && upgradeAgent.owner() != 0x0 && !finalizedUpgrade); // need a real upgradeAgent address
+        require(upgradeAgentStatus && upgradeAgent.owner() != 0x0); // need a real upgradeAgent address
 
         // Validate input value.
         require (value > 0);

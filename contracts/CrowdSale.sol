@@ -11,8 +11,6 @@ contract CrowdSale is Haltable,SafeMath {
     uint256 public start;
     //crowdsale end time
     uint256 public end;
-    //address where funds are collected
-    address public wallet;
     //Tokens per Ether in preFunding
     uint256 public preFundingtokens;
     //Tokens per Ether in Funding
@@ -44,8 +42,7 @@ contract CrowdSale is Haltable,SafeMath {
     // @param _fundingTokens Tokens per Ether in Funding
     // @param _start start time of crowdsale
     // @param _end end time of crowdsale
-    function CrowdSale(address _wallet,uint256 _preFundingtokens,uint256 _fundingTokens,uint256 _start,uint256 _end) public {
-        wallet = _wallet;
+    function CrowdSale(uint256 _preFundingtokens,uint256 _fundingTokens,uint256 _start,uint256 _end) public {
         preFundingtokens = _preFundingtokens;
         fundingTokens = _fundingTokens;
         start = _start;
@@ -91,21 +88,21 @@ contract CrowdSale is Haltable,SafeMath {
 
     //Owner can Set token contract
     //@ param _miBoodleToken address of token contract.
-    function setTokenContract(address _miBoodleToken) onlyOwner public {
+    function setMiBoodleToken(address _miBoodleToken) onlyOwner public {
         require(_miBoodleToken != 0);
         miBoodleToken = _miBoodleToken;
-    } 
+    }
 
     //Owner can Set Multisig wallet
     //@ param _multisig address of Multisig wallet.
-    function setmultisig(address _multisig) onlyOwner public {
+    function setMultisigWallet(address _multisig) onlyOwner public {
         require(_multisig != 0);
         multisig = _multisig;
     }
 
     //Owner can Set TokenVault
     //@ param _vault address of TokenVault.
-    function setVault(address _vault) onlyOwner public {
+    function setMiBoodleTokenVault(address _vault) onlyOwner public {
         require(_vault != 0);
         vault = _vault;
     }
@@ -128,6 +125,8 @@ contract CrowdSale is Haltable,SafeMath {
         require(miBoodle.setBalances(multisig,250000000 ether));
         Claim(multisig);
         require(miBoodle.setBalances(vault,150000000 ether));
+        isCrowdSaleFinalized = true;
+        require(multisig.send(this.balance));
         Claim(vault);
     }
 
@@ -141,7 +140,7 @@ contract CrowdSale is Haltable,SafeMath {
         uint256 createdTokens;
         if (now < start)
             createdTokens = safeMul(msg.value,preFundingtokens);
-        else if (now > start)
+        else if (now >= start)
             createdTokens = safeMul(msg.value,fundingTokens);
         else
             revert();
@@ -149,7 +148,5 @@ contract CrowdSale is Haltable,SafeMath {
         require(safeAdd(createdTokens,totalSupply) <= maxTokenSupply);
         //call internal method to assign tokens
         assignTokens(msg.sender,createdTokens);
-        //transfer all ethers to wallet
-        wallet.transfer(msg.value);
     }
 }
