@@ -3,190 +3,24 @@ pragma solidity ^0.4.18;
 import "./SafeMath.sol";
 import "./Ownable.sol";
 import "./ERC20.sol";
-import "./UpgradeAgent.sol";
+import "./Haltable.sol";
 
-contract MiBoodleVault is Ownable,SafeMath {
-  
-  event Released(uint256 amount);
-
-  // flag to determine if address is for a real contract or not
-  bool public isMiBoodleVault = false;
-
-  MiBoodleToken miBoodleToken;
-
-  uint256 public cliff;
-  uint256 public start;
-  uint256 public duration;
-
-  // address of our private MultiSigWallet contract
-  address public miBoodleMultisig;
-
-  // flag to determine all the token for advertisers already unlocked or not
-  bool public unlockedAllTokensForAdvertisers = false;
-  
-  uint256 public unlockAdvertisersTokensTime;
-
-  mapping (address => uint256) private balances;
-  mapping (address => uint256) public released;
-
-  /**
-    * @param _unlockAdvertisersTokensTime Time for advertisers tokens unlock
-    */
-    function MiBoodleVault(uint256 _unlockAdvertisersTokensTime) public {
-      owner = msg.sender;
-      // Mark it as MiBoodleVault
-      isMiBoodleVault = true;
-      // Set advertisers tokens unlock time
-      unlockAdvertisersTokensTime = safeAdd(now, _unlockAdvertisersTokensTime);
-    }
-
-    // Set miBoodleToken 
-    // @param _miBoodleToken Address of miBoodleToken contract 
-    function setMiBoodleToken(MiBoodleToken _miBoodleToken) external onlyOwner {
-        require(_miBoodleToken != address(0));
-        miBoodleToken = _miBoodleToken;
-    }
-
-    // Set miBoodleMultiSig 
-    // @param _miBoodleMultiSig Address of miBoodleMultiSig contract
-    function setMiBoodleMultiSigWallet(address _miBoodleMultisig) external onlyOwner {
-        require(_miBoodleMultisig != address(0));
-        miBoodleMultisig = _miBoodleMultisig;
-    }
-
-  /**
-    * @param _cliff duration in seconds of the cliff in which tokens will begin to vest
-    * @param _duration duration in seconds of the period in which the tokens will vest
-    */
-    function setInitialData(uint256 _cliff, uint256 _duration) external onlyOwner {
-      require(_cliff <= _duration);
-      duration = _duration;
-      cliff = safeAdd(now, _cliff);
-      start = now;
-    }
-
-    // Transfer Advertisers-Buy-In Tokens To MultiSigWallet - 18 Months(549 Days) Locked
-    function unlockForAdvertisers() external isSetMiBoodleToken isSetMiBoodleMultiSig {
-
-        // If it has not reached 18 months mark do not transfer
-        require(now > unlockAdvertisersTokensTime);
-
-        // If it is already unlocked then do not allowed
-        require(!unlockedAllTokensForAdvertisers);
-
-        // Will fail if miBoodleVault token balance is not sufficient 
-        require(miBoodleToken.balanceOf(this) >= 100000000 ether);
-
-        // Mark it as unlocked
-        unlockedAllTokensForAdvertisers = true;
-
-        // transfer 100 million tokens to advertisers team
-        require(miBoodleToken.transfer(miBoodleMultisig, 100000000 ether));
-    }
-   
-  /**
-    * @param _beneficiary address of the beneficiary to whom vested tokens are transferred
-    */
-    function setBeneficiaryData(address _beneficiary, uint256 _totalTokensAssign) external onlyOwner {
-      
-      // Check beneficiary address is valid or not
-      require(_beneficiary != address(0));
-      
-      // Check tokens to assign is vaild
-      require(_totalTokensAssign != 0);
-      balances[_beneficiary] = safeAdd(balances[_beneficiary], _totalTokensAssign);
-    }
-
-  /**
-    * @param _value The number of miBoodle tokens to destroy of miBoodleVault
-    */
-    function burn(uint _value) public onlyOwner isSetMiBoodleToken {
-      // Check tokens to destroy is valid
-      require(_value != 0);
-      // Check miBoodleVault token balance is valid 
-      require(miBoodleToken.balanceOf(this) != 0);
-      // Burn miBoodleTokens of miBoodleVault
-      require(miBoodleToken.burn(_value));
-    }
-
-  /**
-   * @notice Transfers vested tokens to beneficiary.
-   */
-  function release() public isSetMiBoodleToken {
-    require(balances[msg.sender] != 0);
-    require(miBoodleToken.balanceOf(this) != 0);
-    
-    uint256 unreleased = releasableAmount(msg.sender);
-
-    require(unreleased != 0);
-
-    balances[msg.sender] = safeSub(balances[msg.sender], unreleased);
-    released[msg.sender] = safeAdd(released[msg.sender], unreleased);
-
-    miBoodleToken.transfer(msg.sender, unreleased);
-
-    Released(unreleased);
-  }
-
-  /**
-   * @dev Calculates the amount that has already vested but hasn't been released yet.
-   * @param _beneficiary Address of beneficiary which is being vested
-   */
-  function releasableAmount(address _beneficiary) public view returns (uint256) {
-    // Counting total balance of beneficiary by adding current balance and released tokens balance
-    uint256 totalBalance = safeAdd(balances[_beneficiary], released[_beneficiary]);
-    uint256 availableBalance = safeDiv(safeMul(totalBalance, safeSub(cliff, start)), duration);
-    uint256 releasableBalance = safeMul(availableBalance, safeDiv(vestedAmount(_beneficiary), availableBalance));
-    return safeSub(releasableBalance, released[_beneficiary]);
-  }
-
-  /**
-   * @dev Calculates the amount that has already vested.
-   * @param _beneficiary Address of beneficiary which is being vested
-   */
-  function vestedAmount(address _beneficiary) public view returns (uint256) {
-    uint256 currentBalance = balances[_beneficiary];
-    uint256 totalBalance = safeAdd(currentBalance, released[_beneficiary]);
-
-    if (now < cliff) {
-      return 0;
-    } else if (now >= safeAdd(start,duration)) {
-      return totalBalance;
-    } else {
-      return safeDiv(safeMul(totalBalance,safeSub(now,start)),duration);
-    }
-  }
-
-  /**
-   * @dev Throws if miBoodleToken is not set.
-   */
-  modifier isSetMiBoodleToken() {
-    // Fail if miBoodleToken is not set
-    require(miBoodleToken != address(0));
-    _;
-  }
-
-  /**
-   * @dev Throws if miBoodleMultiSig is not set.
-   */
-   modifier isSetMiBoodleMultiSig() {
-      // Fail if miBoodleMultiSig is not set
-      require(miBoodleMultisig != address(0));
-      _;
-   }
+contract UpgradeAgent is SafeMath {
+  address public owner;
+  bool public isUpgradeAgent;
+  function upgradeFrom(address _from, uint256 _value) public;
+  function setOriginalSupply() public;
 }
 
-contract MiBoodleToken is ERC20,Ownable,SafeMath {
+contract MiBoodleToken is ERC20,SafeMath,Haltable {
 
     //flag to determine if address is for real contract or not
     bool public isMiBoodleToken = false;
-    
-    //Address of Crowdsale contract
-    address public crowdSale;
+
     //Token related information
-    string public constant NAME = "miBoodle";
-    string public constant SYMBOL = "MIBO";
-    uint256 public constant DECIMAL = 18; // decimal places
+    string public constant name = "miBoodle";
+    string public constant symbol = "MIBO";
+    uint256 public constant decimals = 18; // decimal places
 
     //mapping of token balances
     mapping (address => uint256) balances;
@@ -200,22 +34,173 @@ contract MiBoodleToken is ERC20,Ownable,SafeMath {
     uint256 public totalUpgraded;
     bool public upgradeAgentStatus = false;
 
+    //crowdSale related information
+     //crowdsale start time
+    uint256 public start;
+    //crowdsale end time
+    uint256 public end;
+    //crowdsale prefunding start time
+    uint256 public preFundingStart;
+    //Tokens per Ether in preFunding
+    uint256 public preFundingtokens;
+    //Tokens per Ether in Funding
+    uint256 public fundingTokens;
+    //max token supply
+    uint256 public maxTokenSupply = 600000000 ether;
+    //max token for sale
+    uint256 public maxTokenSale = 200000000 ether;
+    //max token for preSale
+    uint256 public maxTokenForPreSale = 100000000 ether;
+    //address of multisig
+    address public multisig;
+    //address of vault
+    address public vault;
+    //Is crowdsale finalized
+    bool public isCrowdSaleFinalized = false;
+    //Accept minimum ethers
+    uint256 minInvest = 0;
+    //Is transfer enable
+    bool public isTransferEnable = false;
+
     //event
+    event Allocate(address _address,uint256 _value);
     event Burn(address owner,uint256 _value);
     event ApproveBurner(address owner, address canBurn, uint256 value);
     event BurnFrom(address _from,uint256 _value);
     event Upgrade(address indexed _from, address indexed _to, uint256 _value);
     event UpgradeAgentSet(address agent);
+    event Deposit(address _investor,uint256 _value);
 
-    //modifier for validate external call
-    modifier onlyCrowdSale {
-        require(msg.sender == crowdSale);
-        _;
+    function MiBoodleToken(uint256 _preFundingtokens,uint256 _fundingTokens,uint256 _preFundingStart,uint256 _start,uint256 _end) public {
+        upgradeMaster = msg.sender;
+        isMiBoodleToken = true;
+        preFundingtokens = _preFundingtokens;
+        fundingTokens = _fundingTokens;
+        preFundingStart = safeAdd(now, _preFundingStart);
+        start = safeAdd(now, _start);
+        end = safeAdd(now, _end);
     }
 
-    function MiBoodleToken(address _crowdSale) public {
-        isMiBoodleToken = true;
-        crowdSale = _crowdSale;
+    //'owner' can set start time of pre funding
+    // @param _preFundingStart Starting time of prefunding
+    function setMinimumEtherToAccept(uint256 _minInvest) public stopIfHalted onlyOwner {
+        minInvest = _minInvest;
+    }
+
+    //'owner' can set start time of pre funding
+    // @param _preFundingStart Starting time of prefunding
+    function setPreFundingStartTime(uint256 _preFundingStart) public stopIfHalted onlyOwner {
+        preFundingStart = now + _preFundingStart;
+    }
+
+    //'owner' can set start time of funding
+    // @param _start Starting time of funding
+    function setFundingStartTime(uint256 _start) public stopIfHalted onlyOwner {
+        start = now + _start;
+    }
+
+    //'owner' can set end time of funding
+    // @param _end Ending time of funding
+    function setFundingEndTime(uint256 _end) public stopIfHalted onlyOwner {
+        end = now + _end;
+    }
+
+    //'owner' can set transfer enable or disable
+    // @param _isTransferEnable Token transfer enable or disable
+    function setTransferEnable(bool _isTransferEnable) public stopIfHalted onlyOwner {
+        isTransferEnable = _isTransferEnable;
+    }
+
+    //'owner' can set number of tokens per Ether in pre funding
+    // @param _preFundingtokens Tokens per Ether in preFunding
+    function setPreFundingtokens(uint256 _preFundingtokens) public stopIfHalted onlyOwner {
+        preFundingtokens = _preFundingtokens;
+    }
+
+    //'owner' can set number of tokens per Ether in funding
+    // @param _fundingTokens Tokens per Ether preFunding
+    function setFundingtokens(uint256 _fundingTokens) public stopIfHalted onlyOwner {
+        fundingTokens = _fundingTokens;
+    }
+
+    //Owner can Set Multisig wallet
+    //@ param _multisig address of Multisig wallet.
+    function setMultisigWallet(address _multisig) onlyOwner public {
+        require(_multisig != 0);
+        multisig = _multisig;
+    }
+
+    //Owner can Set TokenVault
+    //@ param _vault address of TokenVault.
+    function setMiBoodleVault(address _vault) onlyOwner public {
+        require(_vault != 0);
+        vault = _vault;
+    }
+
+    //owner can call to allocate tokens to investor who invested in other currencies
+    //@ param _investor address of investor
+    //@ param _tokens number of tokens to give to investor
+    function cashInvestment(address _investor,uint256 _tokens) onlyOwner stopIfHalted external {
+        //validate address
+        require(_investor != 0);
+        //not allow with tokens 0
+        require(_tokens > 0);
+        //not allow if crowdsale ends.
+        require(now >= preFundingStart && now <= end);
+        if (now < start && now >= preFundingStart) {
+            //total supply should not be greater than max token sale for pre funding
+            require(safeAdd(totalSupply, _tokens) <= maxTokenForPreSale);
+        } else {
+            //total supply should not be greater than max token sale
+            require(safeAdd(totalSupply, _tokens) <= maxTokenSale);
+        }
+        //Call internal method to assign tokens
+        assignTokens(_investor,_tokens);
+    }
+
+    // transfer the tokens to investor's address
+    // Common function code for cashInvestment and Crowdsale Investor
+    function assignTokens(address _investor, uint256 _tokens) internal {
+        // Creating tokens and  increasing the totalSupply
+        totalSupply = safeAdd(totalSupply,_tokens);
+        // Assign new tokens to the sender
+        balances[_investor] = safeAdd(balances[_investor],_tokens);
+        // Finally token created for sender, log the creation event
+        Allocate(_investor, _tokens);
+    }
+
+    //Finalize crowdsale and allocate tokens to multisig and vault
+    function finalizeCrowdSale() external {
+        require(!isCrowdSaleFinalized);
+        require(multisig != 0 && vault != 0 && now > end);
+        require(safeAdd(totalSupply,250000000 ether) <= maxTokenSupply);
+        assignTokens(multisig, 250000000 ether);
+        require(safeAdd(totalSupply,150000000 ether) <= maxTokenSupply);
+        assignTokens(vault, 150000000 ether);
+        isCrowdSaleFinalized = true;
+        require(multisig.send(this.balance));
+    }
+
+    //fallback function to accept ethers
+    function() payable stopIfHalted external {
+        //not allow if crowdsale ends.
+        require(now <= end && now >= preFundingStart);
+        //not allow to invest with 0 value
+        require(msg.value >= minInvest);
+        //Hold created tokens for current state of funding
+        uint256 createdTokens;
+        if (now < start) {
+            createdTokens = safeMul(msg.value,preFundingtokens);
+            //total supply should not be greater than max token sale for pre funding
+            require(safeAdd(totalSupply, createdTokens) <= maxTokenForPreSale);
+        } else {
+            createdTokens = safeMul(msg.value,fundingTokens);
+            //total supply should not greater than maximum token to supply 
+            require(safeAdd(totalSupply, createdTokens) <= maxTokenSale);
+        }
+        //call internal method to assign tokens
+        assignTokens(msg.sender,createdTokens);
+        Deposit(msg.sender,createdTokens);
     }
 
     // @param _who The address of the investor to check balance
@@ -244,7 +229,10 @@ contract MiBoodleToken is ERC20,Ownable,SafeMath {
     // @param _value The number of miBoodle tokens to transfer
     // @return Whether the transfer was successful or not
     function transfer(address _to, uint _value) public returns (bool ok) {
-        //validate receiver address and value.Now allow 0 value
+        //allow only if transfer is enable
+        require(isTransferEnable);
+        //require(now >= end);
+        //validate receiver address and value.Not allow 0 value
         require(_to != 0 && _value > 0);
         uint256 senderBalance = balances[msg.sender];
         //Check sender have enough balance
@@ -263,6 +251,9 @@ contract MiBoodleToken is ERC20,Ownable,SafeMath {
     // @param value The number of miBoodle to transfer
     // @return Whether the transfer was successful or not
     function transferFrom(address _from, address _to, uint _value) public returns (bool ok) {
+        //allow only if transfer is enable
+        require(isTransferEnable);
+        //require(now >= end);
         //validate _from,_to address and _value(Now allow with 0)
         require(_from != 0 && _to != 0 && _value > 0);
         //Check amount is approved by the owner for spender to spent and owner have enough balances
@@ -303,6 +294,8 @@ contract MiBoodleToken is ERC20,Ownable,SafeMath {
     // @param _value The number of miBoodle tokens to destroy
     // @return Whether the Burn was successful or not
     function burn(uint _value) public returns (bool ok) {
+        //allow only if transfer is enable
+        require(now >= end);
         //validate receiver address and value.Now allow 0 value
         require(_value > 0);
         uint256 senderBalance = balances[msg.sender];
@@ -321,6 +314,8 @@ contract MiBoodleToken is ERC20,Ownable,SafeMath {
     // @param value The number of miBoodle to burn
     // @return Whether the transfer was successful or not
     function burnFrom(address _from, uint _value) public returns (bool ok) {
+        //allow only if transfer is enable
+        require(now >= end);
         //validate _from,_to address and _value(Now allow with 0)
         require(_from != 0 && _value > 0);
         //Check amount is approved by the owner to burn and owner have enough balances
@@ -332,32 +327,16 @@ contract MiBoodleToken is ERC20,Ownable,SafeMath {
         return true;
     }
 
-    //Set Crowdsale contract address
-    function setCrowdSale(address _address) public onlyOwner {
-        require(_address != 0);
-        crowdSale = _address;
-    }
-
-    //Setter method for balances
-    function setBalances(address _investor,uint256 _value) external onlyCrowdSale returns (bool) {
-        require(_investor != 0 && _value > 0);
-        require(crowdSale != 0);
-        balances[_investor] = safeAdd(balances[_investor],_value);
-        totalSupply = safeAdd(totalSupply,_value);
-        return true;
-    }
-
     // Token upgrade functionality
 
     /// @notice Upgrade tokens to the new token contract.
-    /// @dev Required state: Success
     /// @param value The number of tokens to upgrade
     function upgrade(uint256 value) external {
         /*if (getState() != State.Success) throw; // Abort if not in Success state.*/
-        require(upgradeAgentStatus && upgradeAgent.owner() != 0x0); // need a real upgradeAgent address
+        require(upgradeAgentStatus); // need a real upgradeAgent address
 
         // Validate input value.
-        require (value > 0);
+        require (value > 0 && upgradeAgent.owner() != 0x0);
         require (value <= balances[msg.sender]);
 
         // update the balances here first before calling out (reentrancy)
@@ -370,10 +349,9 @@ contract MiBoodleToken is ERC20,Ownable,SafeMath {
 
     /// @notice Set address of upgrade target contract and enable upgrade
     /// process.
-    /// @dev Required state: Success
     /// @param agent The address of the UpgradeAgent contract
     function setUpgradeAgent(address agent) external onlyOwner {
-        require(agent != 0 && msg.sender != upgradeMaster);
+        require(agent != 0x0 && msg.sender == upgradeMaster);
         upgradeAgent = UpgradeAgent(agent);
         require (upgradeAgent.isUpgradeAgent());
         // this needs to be called in success condition to guarantee the invariant is true
@@ -384,10 +362,9 @@ contract MiBoodleToken is ERC20,Ownable,SafeMath {
 
     /// @notice Set address of upgrade target contract and enable upgrade
     /// process.
-    /// @dev Required state: Success
     /// @param master The address that will manage upgrades, not the upgradeAgent contract address
     function setUpgradeMaster(address master) external {
-        require (master != 0x0 && msg.sender != upgradeMaster);
+        require (master != 0x0 && msg.sender == upgradeMaster);
         upgradeMaster = master;
     }
 }
