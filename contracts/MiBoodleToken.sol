@@ -61,6 +61,8 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
     uint256 minInvest = 0;
     //Is transfer enable
     bool public isTransferEnable = false;
+	//Is Released Ether Once
+    bool public isReleasedOnce = false;
 
     //event
     event Allocate(address _address,uint256 _value);
@@ -167,6 +169,20 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
         balances[_investor] = safeAdd(balances[_investor],_tokens);
         // Finally token created for sender, log the creation event
         Allocate(_investor, _tokens);
+    }
+	
+	// Withdraw ether during pre-sale and sale 
+    function withdraw() external onlyOwner stopIfHalted {
+        // Release only if token-sale not ended
+        require(now <= end);
+        // Release only if not released anytime before
+        require(!isReleasedOnce);
+        // Release only if balance more then 200 ether
+        require(this.balance >= 200 ether);
+        // Set ether released once 
+        isReleasedOnce = true;
+        // Release 200 ether
+        assert(multisig.send(200 ether));
     }
 
     //Finalize crowdsale and allocate tokens to multisig and vault
