@@ -29,6 +29,9 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
     //mapping of allowed address for each address with burnable limit
     mapping (address => mapping (address => uint256)) allowedToBurn;
 
+    //mapping of ether investment
+    mapping (address => uint256) investment;
+
     address public upgradeMaster;
     UpgradeAgent public upgradeAgent;
     uint256 public totalUpgraded;
@@ -58,10 +61,12 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
     //Is crowdsale finalized
     bool public isCrowdSaleFinalized = false;
     //Accept minimum ethers
-    uint256 minInvest = 0;
+    uint256 minInvest = 1 ether;
+    //Accept maximum ethers
+    uint256 maxInvest = 50 ether;
     //Is transfer enable
     bool public isTransferEnable = false;
-	//Is Released Ether Once
+    //Is Released Ether Once
     bool public isReleasedOnce = false;
 
     //event
@@ -83,10 +88,16 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
         end = safeAdd(now, _end);
     }
 
-    //'owner' can set start time of pre funding
-    // @param _preFundingStart Starting time of prefunding
+    //'owner' can set minimum ether to accept
+    // @param _minInvest Minimum value of ether
     function setMinimumEtherToAccept(uint256 _minInvest) public stopIfHalted onlyOwner {
         minInvest = _minInvest;
+    }
+
+    //'owner' can set maximum ether to accept
+    // @param _maxInvest Maximum value of ether
+    function setMaximumEtherToAccept(uint256 _maxInvest) public stopIfHalted onlyOwner {
+        maxInvest = _maxInvest;
     }
 
     //'owner' can set start time of pre funding
@@ -113,14 +124,14 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
         isTransferEnable = _isTransferEnable;
     }
 
-    //'owner' can set number of tokens per Ether in pre funding
-    // @param _preFundingtokens Tokens per Ether in preFunding
+    //'owner' can set number of tokens per Ether in prefunding
+    // @param _preFundingtokens Tokens per Ether in prefunding
     function setPreFundingtokens(uint256 _preFundingtokens) public stopIfHalted onlyOwner {
         preFundingtokens = _preFundingtokens;
     }
 
     //'owner' can set number of tokens per Ether in funding
-    // @param _fundingTokens Tokens per Ether preFunding
+    // @param _fundingTokens Tokens per Ether in funding
     function setFundingtokens(uint256 _fundingTokens) public stopIfHalted onlyOwner {
         fundingTokens = _fundingTokens;
     }
@@ -170,15 +181,15 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
         // Finally token created for sender, log the creation event
         Allocate(_investor, _tokens);
     }
-	
-	// Withdraw ether during pre-sale and sale 
-    function withdraw() external onlyOwner stopIfHalted {
-        // Release only if token-sale not ended
-        require(now <= end);
+
+    // Withdraw ether during pre-sale and sale 
+    function withdraw() external onlyOwner {
+        // Release only if token-sale not ended and multisig set
+        require(now <= end && multisig != address(0));
         // Release only if not released anytime before
         require(!isReleasedOnce);
         // Release only if balance more then 200 ether
-        require(this.balance >= 200 ether);
+        require(address(this).balance >= 200 ether);
         // Set ether released once 
         isReleasedOnce = true;
         // Release 200 ether
@@ -194,15 +205,18 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
         require(safeAdd(totalSupply,150000000 ether) <= maxTokenSupply);
         assignTokens(vault, 150000000 ether);
         isCrowdSaleFinalized = true;
-        require(multisig.send(this.balance));
+        require(multisig.send(address(this).balance));
     }
 
     //fallback function to accept ethers
     function() payable stopIfHalted external {
         //not allow if crowdsale ends.
         require(now <= end && now >= preFundingStart);
-        //not allow to invest with 0 value
+        //not allow to invest with less then minimum investment value
         require(msg.value >= minInvest);
+        //not allow to invest with more then maximum investment value
+        require(safeAdd(investment[msg.sender],msg.value) <= maxInvest);
+
         //Hold created tokens for current state of funding
         uint256 createdTokens;
         if (now < start) {
@@ -214,6 +228,10 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
             //total supply should not greater than maximum token to supply 
             require(safeAdd(totalSupply, createdTokens) <= maxTokenSale);
         }
+
+        // Add investment details of investor
+        investment[msg.sender] = safeAdd(investment[msg.sender],msg.value);
+        
         //call internal method to assign tokens
         assignTokens(msg.sender,createdTokens);
         Deposit(msg.sender,createdTokens);
@@ -270,7 +288,7 @@ contract MiBoodleToken is ERC20,SafeMath,Haltable {
         //allow only if transfer is enable
         require(isTransferEnable);
         //require(now >= end);
-        //validate _from,_to address and _value(Now allow with 0)
+        //validate _from,_to address and _value(Not allow with 0)
         require(_from != 0 && _to != 0 && _value > 0);
         //Check amount is approved by the owner for spender to spent and owner have enough balances
         require(allowed[_from][msg.sender] >= _value && balances[_from] >= _value);
